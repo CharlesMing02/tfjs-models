@@ -15,58 +15,65 @@
  * =============================================================================
  */
 
-import '@tensorflow/tfjs-backend-webgl';
-import '@tensorflow/tfjs-backend-webgpu';
-import * as mpPose from '@mediapipe/pose';
+import "@tensorflow/tfjs-backend-webgl";
+import "@tensorflow/tfjs-backend-webgpu";
+import * as mpPose from "@mediapipe/pose";
 
-import * as tfjsWasm from '@tensorflow/tfjs-backend-wasm';
+import * as tfjsWasm from "@tensorflow/tfjs-backend-wasm";
 
 tfjsWasm.setWasmPaths(
-    `https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@${
-        tfjsWasm.version_wasm}/dist/`);
+  `https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@${tfjsWasm.version_wasm}/dist/`
+);
 
-import * as posedetection from '@tensorflow-models/pose-detection';
-import * as tf from '@tensorflow/tfjs-core';
+import * as posedetection from "@tensorflow-models/pose-detection";
+import * as tf from "@tensorflow/tfjs-core";
 
-import {setupStats} from './stats_panel';
-import {Context} from './camera';
-import {setupDatGui} from './option_panel';
-import {STATE} from './params';
-import {setBackendAndEnvFlags} from './util';
+import { setupStats } from "./stats_panel";
+import { Context } from "./camera";
+import { setupDatGui } from "./option_panel";
+import { STATE } from "./params";
+import { setBackendAndEnvFlags } from "./util";
 
-let detector, camera, stats;
-let startInferenceTime, numInferences = 0;
-let inferenceTimeSum = 0, lastPanelUpdate = 0;
+const fs = require("fs");
+
+let detector, camera, stats, allKeypoints;
+let startInferenceTime,
+  numInferences = 0;
+let inferenceTimeSum = 0,
+  lastPanelUpdate = 0;
 let rafId;
-const statusElement = document.getElementById('status');
+const statusElement = document.getElementById("status");
 
 async function createDetector() {
   switch (STATE.model) {
     case posedetection.SupportedModels.PoseNet:
       return posedetection.createDetector(STATE.model, {
         quantBytes: 4,
-        architecture: 'MobileNetV1',
+        architecture: "MobileNetV1",
         outputStride: 16,
-        inputResolution: {width: 500, height: 500},
-        multiplier: 0.75
+        inputResolution: { width: 500, height: 500 },
+        multiplier: 0.75,
       });
     case posedetection.SupportedModels.BlazePose:
-      const runtime = STATE.backend.split('-')[0];
-      if (runtime === 'mediapipe') {
+      const runtime = STATE.backend.split("-")[0];
+      if (runtime === "mediapipe") {
         return posedetection.createDetector(STATE.model, {
           runtime,
           modelType: STATE.modelConfig.type,
-          solutionPath: `https://cdn.jsdelivr.net/npm/@mediapipe/pose@${mpPose.VERSION}`
+          solutionPath: `https://cdn.jsdelivr.net/npm/@mediapipe/pose@${mpPose.VERSION}`,
         });
-      } else if (runtime === 'tfjs') {
-        return posedetection.createDetector(
-            STATE.model, {runtime, modelType: STATE.modelConfig.type});
+      } else if (runtime === "tfjs") {
+        return posedetection.createDetector(STATE.model, {
+          runtime,
+          modelType: STATE.modelConfig.type,
+        });
       }
     case posedetection.SupportedModels.MoveNet:
-      const modelType = STATE.modelConfig.type == 'lightning' ?
-          posedetection.movenet.modelType.SINGLEPOSE_LIGHTNING :
-          posedetection.movenet.modelType.SINGLEPOSE_THUNDER;
-      return posedetection.createDetector(STATE.model, {modelType});
+      const modelType =
+        STATE.modelConfig.type == "lightning"
+          ? posedetection.movenet.modelType.SINGLEPOSE_LIGHTNING
+          : posedetection.movenet.modelType.SINGLEPOSE_THUNDER;
+      return posedetection.createDetector(STATE.model, { modelType });
   }
 }
 
@@ -104,7 +111,9 @@ function endEstimatePosesStats() {
     inferenceTimeSum = 0;
     numInferences = 0;
     stats.customFpsPanel.update(
-        1000.0 / averageInferenceTime, 120 /* maxValue */);
+      1000.0 / averageInferenceTime,
+      120 /* maxValue */
+    );
     lastPanelUpdate = endInferenceTime;
   }
 }
@@ -113,9 +122,10 @@ async function renderResult() {
   // FPS only counts the time it takes to finish estimatePoses.
   beginEstimatePosesStats();
 
-  const poses = await detector.estimatePoses(
-      camera.video,
-      {maxPoses: STATE.modelConfig.maxPoses, flipHorizontal: false});
+  const poses = await detector.estimatePoses(camera.video, {
+    maxPoses: STATE.modelConfig.maxPoses,
+    flipHorizontal: false,
+  });
 
   endEstimatePosesStats();
 
@@ -126,6 +136,10 @@ async function renderResult() {
   // model, which shouldn't be rendered.
   if (poses.length > 0 && !STATE.isModelChanged) {
     camera.drawResults(poses);
+    console.log(poses);
+    for (const [index, pose] of poses.entries()) {
+      allKeypoints[index].push(pose);
+    }
   }
 }
 
@@ -151,7 +165,15 @@ async function updateVideo(event) {
   camera.canvas.width = videoWidth;
   camera.canvas.height = videoHeight;
 
-  statusElement.innerHTML = 'Video is loaded.';
+  statusElement.innerHTML = "Video is loaded.";
+}
+
+function download(content, fileName, contentType) {
+  const a = document.createElement("a");
+  const file = new Blob([content], { type: contentType });
+  a.href = URL.createObjectURL(file);
+  a.download = fileName;
+  a.click();
 }
 
 async function runFrame() {
@@ -160,7 +182,12 @@ async function runFrame() {
     // video has finished.
     camera.mediaRecorder.stop();
     camera.clearCtx();
-    camera.video.style.visibility = 'visible';
+    camera.video.style.visibility = "visible";
+    // TODO: Now perform analysis, assuming we have all the poses saved?
+    // very likely I'll be using this for separate vids. maybe I should save to JSON and create separate program
+    console.log(allKeypoints);
+    const jsonString = JSON.stringify(allKeypoints);
+    download(jsonString, "allKeypoints.json", "text/plain");
     return;
   }
   await renderResult();
@@ -168,22 +195,28 @@ async function runFrame() {
 }
 
 async function run() {
-  statusElement.innerHTML = 'Warming up model.';
+  statusElement.innerHTML = "Warming up model.";
 
   // Warming up pipeline.
-  const [runtime, $backend] = STATE.backend.split('-');
+  const [runtime, $backend] = STATE.backend.split("-");
 
-  if (runtime === 'tfjs') {
-    const warmUpTensor =
-        tf.fill([camera.video.height, camera.video.width, 3], 0, 'float32');
-    await detector.estimatePoses(
-        warmUpTensor,
-        {maxPoses: STATE.modelConfig.maxPoses, flipHorizontal: false});
+  if (runtime === "tfjs") {
+    const warmUpTensor = tf.fill(
+      [camera.video.height, camera.video.width, 3],
+      0,
+      "float32"
+    );
+    await detector.estimatePoses(warmUpTensor, {
+      maxPoses: STATE.modelConfig.maxPoses,
+      flipHorizontal: false,
+    });
     warmUpTensor.dispose();
-    statusElement.innerHTML = 'Model is warmed up.';
+    statusElement.innerHTML = "Model is warmed up.";
   }
 
-  camera.video.style.visibility = 'hidden';
+  allKeypoints = [[], [], [], [], [], [], [], [], [], []];
+
+  camera.video.style.visibility = "hidden";
   video.pause();
   video.currentTime = 0;
   video.play();
@@ -196,13 +229,14 @@ async function run() {
   });
 
   await runFrame();
+  // at this point only the first frame has run
 }
 
 async function app() {
   // Gui content will change depending on which model is in the query string.
   const urlParams = new URLSearchParams(window.location.search);
-  if (!urlParams.has('model')) {
-    alert('Cannot find model in the query string.');
+  if (!urlParams.has("model")) {
+    alert("Cannot find model in the query string.");
     return;
   }
 
@@ -213,11 +247,11 @@ async function app() {
   await setBackendAndEnvFlags(STATE.flags, STATE.backend);
   detector = await createDetector();
 
-  const runButton = document.getElementById('submit');
+  const runButton = document.getElementById("submit");
   runButton.onclick = run;
 
-  const uploadButton = document.getElementById('videofile');
+  const uploadButton = document.getElementById("videofile");
   uploadButton.onchange = updateVideo;
-};
+}
 
 app();
